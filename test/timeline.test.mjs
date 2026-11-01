@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { computeKeepRanges, buildTimeline, sourceTimeAt, visibleAt, XFADE } from '../js/timeline.js';
+import { computeKeepRanges, buildTimeline, sourceTimeAt, visibleAt, formatTime, XFADE } from '../js/timeline.js';
 
 const words = [
   { text: 'Hi', start: 0.5, end: 0.8 },
@@ -60,4 +60,36 @@ test('long video is limited to 20 seconds per clip', () => {
   const tl = buildTimeline([{ kind: 'video', srcDuration: 120 }]);
   assert.equal(tl.total, 20);
   assert.equal(tl.truncated, true);
+});
+
+test('a too-short clip is skipped, not the rest of the reel', () => {
+  const tl = buildTimeline([{ kind: 'photo', duration: 3 }, { kind: 'video', srcDuration: 0.25 }, { kind: 'photo', duration: 3 }, { kind: 'photo', duration: 3 }]);
+  assert.equal(tl.entries.length, 3);
+  assert.equal(tl.skipped, 1);
+  assert.equal(tl.truncated, false);
+});
+
+test('unreadable duration and out-of-range word times do not empty the reel', () => {
+  const tl = buildTimeline([{ kind: 'video', srcDuration: NaN }, { kind: 'video', srcDuration: 4, trim: true, words: [{ text: 'hi', start: 9, end: 9.5 }] }, { kind: 'photo', duration: 3 }]);
+  assert.equal(tl.entries.length, 2);
+  assert.ok(tl.total > 3);
+});
+
+test('a short clip is never covered by the next one', () => {
+  const tl = buildTimeline([{ kind: 'photo', duration: 3 }, { kind: 'video', srcDuration: 0.5 }, { kind: 'photo', duration: 3 }]);
+  const [a, b, c] = tl.entries;
+  assert.ok(b.start >= a.start && c.start >= b.start + (b.end - b.start) / 2 - 1e-9);
+  const mid = visibleAt(tl.entries, (b.start + b.end) / 2).find(v => v.entry === b);
+  assert.ok(Math.abs(mid.alpha - 1) < 1e-9);
+});
+
+test('caption cues never end before they start', () => {
+  const w = [{ text: 'one', start: 0.1, end: 0.5 }, { text: 'two', start: 1.6, end: 1.9 }];
+  const tl = buildTimeline([{ kind: 'video', srcDuration: 2, captions: true, words: w }, { kind: 'video', srcDuration: 2, captions: true, words: w }]);
+  for (const c of tl.cues) assert.ok(c.end >= c.start + 0.3 - 1e-9);
+});
+
+test('formatTime survives a missing duration', () => {
+  assert.equal(formatTime(Infinity), '–:––');
+  assert.equal(formatTime(65), '1:05');
 });

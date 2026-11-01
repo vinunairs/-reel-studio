@@ -44,16 +44,23 @@ export function buildTimeline(items, opts = {}) {
   let cursor = 0;
   let truncated = false;
 
+  let skipped = 0;
   for (const item of items) {
-    const start = entries.length ? Math.max(0, cursor - xf) : 0;
+    // crossfade can't be longer than half of either neighbour
+    const prev = entries[entries.length - 1];
+    const ownLen = item.kind === 'photo' ? (item.duration || 3) : (item.srcDuration || 0);
+    const fade = prev ? Math.max(0, Math.min(xf, (prev.end - prev.start) / 2, ownLen / 2)) : 0;
+    const start = prev ? Math.max(0, cursor - fade) : 0;
     if (start >= maxTotal - 0.5) { truncated = true; break; }
     let pieces = [];
     if (item.kind === 'photo') {
       const d = item.duration || 3;
       pieces = [{ srcStart: 0, srcEnd: d, outStart: start }];
     } else {
-      const srcDur = Math.max(0.1, item.srcDuration || 0);
+      const srcDur = Number.isFinite(item.srcDuration) ? item.srcDuration : 0;
       let ranges = item.trim && item.words ? computeKeepRanges(item.words, srcDur) : [[0, srcDur]];
+      ranges = ranges.map(([a, b]) => [Math.max(0, a), Math.min(srcDur, b)]).filter(([a, b]) => b - a > 0.05);
+      if (!ranges.length && srcDur > 0.05) ranges = [[0, srcDur]]; // speech times made no sense: keep the clip whole
       let budget = Math.min(MAX_VIDEO_CLIP, maxTotal - start);
       let out = start;
       for (const [s, e] of ranges) {
@@ -72,12 +79,13 @@ export function buildTimeline(items, opts = {}) {
       p.srcEnd -= end - maxTotal;
       end = maxTotal;
     }
-    if (end - start < 0.3) { truncated = true; break; }
-    entries.push({ item, index: entries.length, start, end, pieces });
+    // too short or unreadable: leave this one out, keep going with the rest
+    if (end - start < 0.3) { skipped++; continue; }
+    entries.push({ item, index: entries.length, start, end, pieces, fadeIn: fade });
     cursor = end;
   }
   const total = entries.length ? entries[entries.length - 1].end : 0;
-  return { entries, total, truncated, cues: buildCues(entries) };
+  return { entries, total, truncated, skipped, cues: buildCues(entries) };
 }
 
 // Source time inside an entry for an output time, or null if out of range.
@@ -125,9 +133,11 @@ export function buildCues(entries) {
     flush();
   }
   // keep each cue on screen until the next starts (if close), so text doesn't flicker
+  cues.sort((a, b) => a.start - b.start);
   for (let i = 0; i < cues.length; i++) {
     const next = cues[i + 1];
-    cues[i].end = next && next.start - cues[i].end < 0.5 ? next.start : cues[i].end + 0.3;
+    const end = next && next.start - cues[i].end < 0.5 ? next.start : cues[i].end + 0.3;
+    cues[i].end = Math.max(end, cues[i].start + 0.3);
   }
   return cues;
 }
@@ -138,13 +148,15 @@ export function visibleAt(entries, t, xf = XFADE) {
   for (const e of entries) {
     if (t < e.start || t > e.end) continue;
     let alpha = 1;
-    if (e.index > 0 && t < e.start + xf) alpha = (t - e.start) / xf;
+    const fade = e.fadeIn ?? (e.index > 0 ? xf : 0);
+    if (fade > 0 && t < e.start + fade) alpha = (t - e.start) / fade;
     out.push({ entry: e, alpha: Math.max(0, Math.min(1, alpha)) });
   }
   return out;
 }
 
 export function formatTime(s) {
+  if (!Number.isFinite(s)) return '–:––';
   s = Math.max(0, Math.round(s));
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
