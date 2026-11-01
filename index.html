@@ -41,7 +41,11 @@
   button:disabled { opacity: .45; }
   .wide { width: 100%; }
   .row { display: flex; gap: 10px; align-items: center; }
-  input[type=file] { display: none; }
+  /* hidden but still reachable by keyboard and VoiceOver through its label */
+  input[type=file] { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; clip: rect(0 0 0 0); }
+  label.btn { position: relative; }
+  label.btn:focus-within { outline: 3px solid var(--accent); outline-offset: 2px; }
+  section.locked { opacity: .55; }
   input[type=text] {
     width: 100%; font: 17px var(--sans); padding: 12px; border: 1px solid var(--line); border-radius: 12px;
     background: var(--bg); color: var(--ink); margin-bottom: 10px;
@@ -55,23 +59,26 @@
   .meta .name { font-weight: 600; }
   .meta .sub { color: var(--muted); font-size: 14px; }
   .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
-  .chip { font: 500 14px var(--sans); padding: 6px 12px; min-height: 34px; border-radius: 999px; }
+  .chip { font: 500 15px var(--sans); padding: 8px 14px; min-height: 44px; border-radius: 999px; }
   .chip[aria-pressed=true] { background: var(--soft); border-color: var(--accent); color: var(--accent); }
   .status { font-size: 13px; color: var(--muted); margin-top: 6px; }
   .status.err { color: #B42318; }
   .order { display: flex; flex-direction: column; gap: 6px; }
-  .order button { padding: 0; width: 40px; min-height: 40px; font-size: 18px; }
+  .order button { padding: 0; width: 44px; min-height: 44px; font-size: 18px; }
   .stage { position: relative; width: min(100%, 300px); margin: 0 auto; aspect-ratio: 9 / 16; border-radius: 16px; overflow: hidden; background: #000; }
-  .stage canvas, .stage video { width: 100%; height: 100%; display: block; }
+  .stage canvas, .stage > video { position: relative; z-index: 1; width: 100%; height: 100%; display: block; }
+  /* source clips sit under the preview: on screen (so iOS keeps decoding them) but covered */
+  #media { position: absolute; inset: 0; z-index: 0; overflow: hidden; pointer-events: none; }
+  #media video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  .err { color: #B42318; font-size: 14px; white-space: pre-line; margin-top: 8px; }
   progress { width: 100%; height: 10px; accent-color: var(--accent); }
   input[type=range] { width: 100%; accent-color: var(--accent); }
   .warn { background: var(--soft); border-radius: 12px; padding: 10px 12px; font-size: 14px; margin-top: 10px; }
   .hidden { display: none !important; }
-  #media { position: fixed; left: -10px; top: 0; width: 1px; height: 1px; overflow: hidden; opacity: 0.01; pointer-events: none; }
   details.diag { color: var(--muted); font-size: 12px; margin-top: 18px; }
   details.diag pre { white-space: pre-wrap; word-break: break-all; }
   .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; }
-  .seg button { border: 0; border-radius: 0; min-height: 34px; padding: 4px 12px; font: 500 14px var(--sans); }
+  .seg button { border: 0; border-radius: 0; min-height: 44px; padding: 4px 14px; font: 500 15px var(--sans); }
   .seg button[aria-pressed=true] { background: var(--soft); color: var(--accent); }
 </style>
 </head>
@@ -88,7 +95,9 @@
       Add photos or videos
       <input id="pick" type="file" accept="image/*,video/*" multiple>
     </label>
+    <div class="err" id="media-err" role="alert"></div>
     <ul class="items" id="items"></ul>
+    <div class="warn hidden" id="skipped">A clip shorter than a third of a second was left out.</div>
     <div class="warn hidden" id="truncated">The reel is capped at 60 seconds, so the end gets cut. Shorten photos or remove a clip.</div>
   </section>
 
@@ -111,6 +120,7 @@
       </label>
       <button id="music-clear" class="hidden" aria-label="Remove music">Remove</button>
     </div>
+    <div class="err" id="music-err" role="alert"></div>
     <div id="music-opts" class="hidden" style="margin-top:12px">
       <label class="field" for="vol">Music volume</label>
       <input id="vol" type="range" min="0" max="1" step="0.05" value="0.8">
@@ -120,20 +130,20 @@
 
   <section>
     <h2>Preview</h2>
-    <div class="stage"><canvas id="preview" width="1080" height="1920"></canvas></div>
+    <div class="stage"><div id="media" aria-hidden="true"></div><canvas id="preview" width="1080" height="1920" aria-label="Reel preview"></canvas></div>
     <div class="row" style="margin-top:12px">
       <button id="play" class="wide" disabled>Play</button>
     </div>
   </section>
 
-  <section>
+  <section id="sec-export">
     <h2>Make the video</h2>
     <p class="hint" id="export-hint">1080 × 1920, ready for Instagram and WhatsApp.</p>
     <button id="export" class="primary wide" disabled>Make video</button>
     <div id="progress-wrap" class="hidden" style="margin-top:12px">
-      <progress id="progress" max="1" value="0"></progress>
+      <progress id="progress" max="1" value="0" aria-label="Export progress"></progress>
       <div class="row" style="justify-content:space-between;margin-top:6px">
-        <span class="status" id="progress-text">Starting…</span>
+        <span class="status" id="progress-text" aria-live="polite">Starting…</span>
         <button id="cancel">Cancel</button>
       </div>
     </div>
@@ -147,7 +157,6 @@
 
   <details class="diag"><summary>Diagnostics</summary><pre id="diag"></pre></details>
 </main>
-<div id="media" aria-hidden="true"></div>
 <script type="module" src="js/app.js"></script>
 </body>
 </html>
