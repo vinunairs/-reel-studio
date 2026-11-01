@@ -11,5 +11,6 @@ Personal iPhone PWA for Vinu's family reels. It's static (GitHub Pages) with no 
 ## Before calling a change done
 1. `node --test test/timeline.test.mjs`
 2. `NODE_PATH=$(npm root -g) node test/e2e.mjs --opus` (WebCodecs path) and `... e2e.mjs --force=realtime` (fallback path)
-3. Look at `test/out/frames.png`-style frames and the editor screenshot yourself.
-4. Work on a branch, open a PR, and don't merge. Vinu merges after an independent review and a test on his phone.
+3. Regression scripts in `test/adversarial/` (races, sync, audio automation, bad files): run the ones your change touches. `sync.mjs` should report max |offset| ≤ 0.05 s on the WebCodecs path.
+4. Look at `test/out/frames.png`-style frames and the editor screenshot yourself.
+5. Work on a branch, open a PR, and don't merge. Vinu merges after an independent review and a test on his phone.

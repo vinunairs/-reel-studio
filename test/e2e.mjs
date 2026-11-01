@@ -96,7 +96,7 @@ try {
   } else {
     check(!!a, 'recording has audio');
   }
-  check(Math.abs(dur - tl.total) < 0.6, `duration ${dur.toFixed(2)} matches timeline ${tl.total.toFixed(2)}`);
+  check(Math.abs(dur - tl.total) < (info.method === 'webcodecs' ? 0.1 : 0.3), `duration ${dur.toFixed(2)} matches timeline ${tl.total.toFixed(2)}`);
 
   // frames for eyeballing: title card, mid clip with caption, end
   for (const [name, t] of [['f-title', 1.5], ['f-clip', 3.6], ['f-end', Math.max(0, tl.total - 1.2)]]) {
