@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#F4EFE8">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Reel Studio">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<title>Reel Studio</title>
+<style>
+  :root {
+    --bg: #F4EFE8; --card: #FFFFFF; --ink: #1D1B19; --muted: #6F6860;
+    --line: #E3DCD2; --accent: #C2410C; --accent-ink: #FFFFFF; --soft: #FBE7DA;
+    --serif: ui-serif, "New York", Georgia, serif;
+    --sans: -apple-system, BlinkMacSystemFont, system-ui, "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.45 var(--sans); }
+  header.bar {
+    position: sticky; top: 0; z-index: 20; background: var(--bg);
+    padding: calc(env(safe-area-inset-top) + 10px) 20px 10px;
+    border-bottom: 1px solid var(--line); display: flex; align-items: baseline; justify-content: space-between;
+  }
+  header.bar h1 { margin: 0; font: 600 24px var(--serif); }
+  header.bar .len { color: var(--muted); font-size: 14px; font-variant-numeric: tabular-nums; }
+  main { padding: 8px 16px calc(env(safe-area-inset-bottom) + 40px); max-width: 640px; margin: 0 auto; }
+  section { background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 16px; margin: 14px 0; }
+  section h2 { margin: 0 0 4px; font: 600 20px var(--serif); }
+  .hint { color: var(--muted); font-size: 14px; margin: 0 0 12px; }
+  button, .btn {
+    font: 600 16px var(--sans); border-radius: 12px; border: 1px solid var(--line); background: var(--card);
+    color: var(--ink); padding: 11px 16px; min-height: 44px; cursor: pointer; -webkit-tap-highlight-color: transparent;
+  }
+  button.primary, .btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  button:disabled { opacity: .45; }
+  .wide { width: 100%; }
+  .row { display: flex; gap: 10px; align-items: center; }
+  /* hidden but still reachable by keyboard and VoiceOver through its label */
+  input[type=file] { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; clip: rect(0 0 0 0); }
+  label.btn { position: relative; }
+  label.btn:focus-within { outline: 3px solid var(--accent); outline-offset: 2px; }
+  section.locked { opacity: .55; }
+  input[type=text] {
+    width: 100%; font: 17px var(--sans); padding: 12px; border: 1px solid var(--line); border-radius: 12px;
+    background: var(--bg); color: var(--ink); margin-bottom: 10px;
+  }
+  label.field { display: block; font-size: 14px; color: var(--muted); margin-bottom: 4px; }
+  ul.items { list-style: none; margin: 12px 0 0; padding: 0; }
+  ul.items li { display: flex; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line); }
+  ul.items li:first-child { border-top: 0; }
+  .thumb { width: 64px; height: 96px; border-radius: 10px; object-fit: cover; background: #ddd; flex: none; }
+  .meta { flex: 1; min-width: 0; }
+  .meta .name { font-weight: 600; }
+  .meta .sub { color: var(--muted); font-size: 14px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .chip { font: 500 15px var(--sans); padding: 8px 14px; min-height: 44px; border-radius: 999px; }
+  .chip[aria-pressed=true] { background: var(--soft); border-color: var(--accent); color: var(--accent); }
+  .status { font-size: 13px; color: var(--muted); margin-top: 6px; }
+  .status.err { color: #B42318; }
+  .order { display: flex; flex-direction: column; gap: 6px; }
+  .order button { padding: 0; width: 44px; min-height: 44px; font-size: 18px; }
+  .stage { position: relative; width: min(100%, 300px); margin: 0 auto; aspect-ratio: 9 / 16; border-radius: 16px; overflow: hidden; background: #000; }
+  .stage canvas, .stage > video { position: relative; z-index: 1; width: 100%; height: 100%; display: block; }
+  /* source clips sit under the preview: on screen (so iOS keeps decoding them) but covered */
+  #media { position: absolute; inset: 0; z-index: 0; overflow: hidden; pointer-events: none; }
+  #media video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  .err { color: #B42318; font-size: 14px; white-space: pre-line; margin-top: 8px; }
+  progress { width: 100%; height: 10px; accent-color: var(--accent); }
+  input[type=range] { width: 100%; accent-color: var(--accent); }
+  .warn { background: var(--soft); border-radius: 12px; padding: 10px 12px; font-size: 14px; margin-top: 10px; }
+  .hidden { display: none !important; }
+  details.diag { color: var(--muted); font-size: 12px; margin-top: 18px; }
+  details.diag pre { white-space: pre-wrap; word-break: break-all; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; }
+  .seg button { border: 0; border-radius: 0; min-height: 44px; padding: 4px 14px; font: 500 15px var(--sans); }
+  .seg button[aria-pressed=true] { background: var(--soft); color: var(--accent); }
+</style>
+</head>
+<body>
+<header class="bar">
+  <h1>Reel Studio</h1>
+  <span class="len" id="len">Empty</span>
+</header>
+<main>
+  <section id="sec-media">
+    <h2>Photos and clips</h2>
+    <p class="hint">Pick them in the order you like, then fine-tune below. Up to 60 seconds of video for now.</p>
+    <label class="btn primary wide" style="display:block;text-align:center">
+      Add photos or videos
+      <input id="pick" type="file" accept="image/*,video/*" multiple>
+    </label>
+    <div class="err" id="media-err" role="alert"></div>
+    <ul class="items" id="items"></ul>
+    <div class="warn hidden" id="skipped">A clip shorter than a third of a second was left out.</div>
+    <div class="warn hidden" id="truncated">The reel is capped at 60 seconds, so the end gets cut. Shorten photos or remove a clip.</div>
+  </section>
+
+  <section>
+    <h2>Title</h2>
+    <p class="hint">Shown over the first few seconds.</p>
+    <label class="field" for="title">Title</label>
+    <input id="title" type="text" placeholder="Clearwater weekend" autocomplete="off">
+    <label class="field" for="subtitle">Second line</label>
+    <input id="subtitle" type="text" placeholder="October 2026" autocomplete="off">
+  </section>
+
+  <section>
+    <h2>Music</h2>
+    <p class="hint">Use your own or royalty-free tracks from Files. Apple Music songs can’t be added.</p>
+    <div class="row">
+      <label class="btn" style="flex:1;text-align:center">
+        <span id="music-label">Choose a track</span>
+        <input id="music" type="file" accept="audio/*,.mp3,.m4a,.wav,.aac">
+      </label>
+      <button id="music-clear" class="hidden" aria-label="Remove music">Remove</button>
+    </div>
+    <div class="err" id="music-err" role="alert"></div>
+    <div id="music-opts" class="hidden" style="margin-top:12px">
+      <label class="field" for="vol">Music volume</label>
+      <input id="vol" type="range" min="0" max="1" step="0.05" value="0.8">
+      <div class="chips"><button class="chip" id="duck" aria-pressed="true">Lower music when people talk</button></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Preview</h2>
+    <div class="stage"><div id="media" aria-hidden="true"></div><canvas id="preview" width="1080" height="1920" aria-label="Reel preview"></canvas></div>
+    <div class="row" style="margin-top:12px">
+      <button id="play" class="wide" disabled>Play</button>
+    </div>
+  </section>
+
+  <section id="sec-export">
+    <h2>Make the video</h2>
+    <p class="hint" id="export-hint">1080 × 1920, ready for Instagram and WhatsApp.</p>
+    <button id="export" class="primary wide" disabled>Make video</button>
+    <div id="progress-wrap" class="hidden" style="margin-top:12px">
+      <progress id="progress" max="1" value="0" aria-label="Export progress"></progress>
+      <div class="row" style="justify-content:space-between;margin-top:6px">
+        <span class="status" id="progress-text" aria-live="polite">Starting…</span>
+        <button id="cancel">Cancel</button>
+      </div>
+    </div>
+    <div id="result" class="hidden" style="margin-top:14px">
+      <div class="stage"><video id="out" controls playsinline></video></div>
+      <button id="save" class="primary wide" style="margin-top:12px">Save to Photos</button>
+      <p class="hint" style="margin-top:8px">Tap Save, then choose “Save Video” in the share sheet.</p>
+    </div>
+    <div class="status err" id="export-err"></div>
+  </section>
+
+  <details class="diag"><summary>Diagnostics</summary><pre id="diag"></pre></details>
+</main>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
