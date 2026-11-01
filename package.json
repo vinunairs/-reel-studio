@@ -1,0 +1,9 @@
+{
+  "name": "reel-studio",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/timeline.test.mjs",
+    "e2e": "node test/e2e.mjs --opus"
+  }
+}
