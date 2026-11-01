@@ -21,7 +21,8 @@ function loadPipeline(onStatus) {
 
 // Returns [{ text, start, end }] in seconds, from a decoded AudioBuffer.
 export async function transcribe(audioBuffer, onStatus) {
-  const pcm = await toMono16k(audioBuffer);
+  // only the first minute can ever end up in a reel, so don't spend phone time on the rest
+  const pcm = (await toMono16k(audioBuffer)).subarray(0, 60 * 16000);
   if (typeof window.__transcribe === 'function') return window.__transcribe(pcm);
   const asr = await loadPipeline(onStatus);
   onStatus && onStatus('Listening…');

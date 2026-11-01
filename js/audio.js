@@ -1,9 +1,8 @@
 // Mixes the soundtrack offline: music (looped, faded, lowered under talking clips)
 // plus each video clip's own audio, cut to match the timeline.
-import { XFADE } from './timeline.js';
 
 export const RATE = 48000;
-const MAX_DECODE_BYTES = 400 * 1024 * 1024; // bigger files are skipped to protect iPhone memory
+const MAX_DECODE_BYTES = 250 * 1024 * 1024; // bigger files are skipped to protect iPhone memory
 
 let decodeCtx = null;
 function getDecodeCtx() {
@@ -15,11 +14,26 @@ function getDecodeCtx() {
 }
 
 // Decode the audio track of a file. Returns null when there is none or it can't be read.
-export async function decodeFile(file) {
+// One decode at a time (several big clips at once can get the tab killed on iPhone),
+// and only the first maxSeconds are kept.
+let queue = Promise.resolve();
+export function decodeFile(file, maxSeconds = Infinity) {
+  const job = queue.then(() => decodeNow(file, maxSeconds));
+  queue = job.catch(() => {});
+  return job;
+}
+
+async function decodeNow(file, maxSeconds) {
   if (!file || file.size > MAX_DECODE_BYTES) return null;
   try {
-    const buf = await file.arrayBuffer();
-    return await getDecodeCtx().decodeAudioData(buf);
+    let buf = await file.arrayBuffer();
+    const full = await getDecodeCtx().decodeAudioData(buf);
+    buf = null;
+    if (full.duration <= maxSeconds + 0.5) return full;
+    const len = Math.round(maxSeconds * full.sampleRate);
+    const cut = new AudioBuffer({ length: len, numberOfChannels: full.numberOfChannels, sampleRate: full.sampleRate });
+    for (let c = 0; c < full.numberOfChannels; c++) cut.copyToChannel(full.getChannelData(c).subarray(0, len), c);
+    return cut;
   } catch {
     return null;
   }
@@ -56,10 +70,12 @@ export async function mixSoundtrack(tl, opts = {}) {
     const entryGain = ctx.createGain();
     entryGain.connect(ctx.destination);
     const g = entryGain.gain;
-    g.setValueAtTime(entry.index > 0 ? 0 : 1, entry.start);
-    if (entry.index > 0) g.linearRampToValueAtTime(1, entry.start + XFADE);
-    if (entry.index < last) {
-      g.setValueAtTime(1, Math.max(entry.start, entry.end - XFADE));
+    const fadeIn = entry.fadeIn ?? 0;
+    const fadeOut = entry.index < last ? (tl.entries[entry.index + 1].fadeIn ?? 0) : 0;
+    g.setValueAtTime(fadeIn > 0 ? 0 : 1, entry.start);
+    if (fadeIn > 0) g.linearRampToValueAtTime(1, entry.start + fadeIn);
+    if (fadeOut > 0) {
+      g.setValueAtTime(1, Math.max(entry.start + fadeIn, entry.end - fadeOut));
       g.linearRampToValueAtTime(0, entry.end);
     }
     for (const p of entry.pieces) {
@@ -81,6 +97,7 @@ export async function mixSoundtrack(tl, opts = {}) {
   if (opts.music) {
     const vol = opts.musicVolume ?? 0.8;
     const low = vol * 0.22;
+    let endLevel = vol;
     const mg = ctx.createGain();
     mg.connect(ctx.destination);
     const g = mg.gain;
@@ -96,16 +113,18 @@ export async function mixSoundtrack(tl, opts = {}) {
         else spans.push([e.start, e.end]);
       }
       for (const [s, e] of spans) {
-        const a = Math.max(0.5, s), b = Math.min(total - 1.5, e);
-        if (b - a < 0.6) continue;
-        g.setValueAtTime(vol, a);
-        g.linearRampToValueAtTime(low, a + 0.3);
-        g.setValueAtTime(low, b - 0.3);
-        g.linearRampToValueAtTime(vol, b);
+        const a = Math.max(0, s);
+        if (e - a < 0.3) continue;
+        g.cancelScheduledValues(a);
+        g.setValueAtTime(a < 0.5 ? 0 : vol, a);
+        g.linearRampToValueAtTime(low, Math.min(a + 0.3, e));
+        if (e >= total - 1.5) { endLevel = low; break; } // still talking at the end: stay low, then fade out
+        g.setValueAtTime(low, Math.max(a + 0.3, e - 0.3));
+        g.linearRampToValueAtTime(vol, e);
       }
     }
     const fadeStart = Math.max(0.5, total - 1.5);
-    g.setValueAtTime(vol, fadeStart);
+    g.setValueAtTime(endLevel, fadeStart);
     g.linearRampToValueAtTime(0, total);
     // loop the track if it's shorter than the reel
     const src = ctx.createBufferSource();

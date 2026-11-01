@@ -138,10 +138,16 @@ async function exportRealtime({ tl, soundtrack, title, subtitle, onProgress, sig
     rec.onerror = e => reject(e.error || new Error('Recording failed'));
     player.onEnd = () => setTimeout(() => rec.state !== 'inactive' && rec.stop(), 200);
     player.onTime = t => onProgress && onProgress(t / tl.total);
-    if (signal) signal.addEventListener('abort', () => { player.stop(); rec.state !== 'inactive' && rec.stop(); });
+    if (signal) signal.addEventListener('abort', () => { player.stop(); if (rec.state !== 'inactive') rec.stop(); else resolve(); });
   });
-  rec.start(1000);
-  await player.play(0, dest);
+  const started = await player.play(0, dest).then(ok => {
+    if (ok) rec.start(1000);
+    return ok;
+  });
+  if (!started) {
+    if (signal && signal.aborted) throw new DOMException('Cancelled', 'AbortError');
+    throw new Error('Recording didn’t start.');
+  }
   await done;
   if (signal && signal.aborted) throw new DOMException('Cancelled', 'AbortError');
   onProgress && onProgress(1);

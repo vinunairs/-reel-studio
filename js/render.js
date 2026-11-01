@@ -19,12 +19,16 @@ export async function seekFor(tl, t) {
   await Promise.all(waits);
 }
 
+// Seeks with a timeout. A clip that misses several seeks in a row is treated as
+// unreadable, so one bad file can't stall the export for half an hour.
 export function seekVideo(v, time) {
+  if ((v.__missedSeeks || 0) >= 3) return Promise.reject(new Error('One of the clips can’t be read frame by frame. Remove it or re-save it from Photos.'));
   return new Promise(resolve => {
     let done = false;
-    const finish = () => { if (done) return; done = true; v.removeEventListener('seeked', finish); clearTimeout(timer); resolve(); };
-    const timer = setTimeout(finish, 3000); // never hang the export on one bad seek
-    v.addEventListener('seeked', finish);
+    const finish = ok => { if (done) return; done = true; v.removeEventListener('seeked', onSeeked); clearTimeout(timer); v.__missedSeeks = ok ? 0 : (v.__missedSeeks || 0) + 1; resolve(); };
+    const onSeeked = () => finish(true);
+    const timer = setTimeout(() => finish(false), 2000);
+    v.addEventListener('seeked', onSeeked);
     v.currentTime = time;
   });
 }
@@ -37,8 +41,8 @@ function coverRect(sw, sh, dw, dh) {
 function drawMedia(ctx, entry, t, alpha) {
   const { item } = entry;
   const el = item.el;
-  const sw = item.kind === 'photo' ? el.naturalWidth : el.videoWidth;
-  const sh = item.kind === 'photo' ? el.naturalHeight : el.videoHeight;
+  const sw = item.kind === 'photo' ? (el.naturalWidth || el.width) : el.videoWidth;
+  const sh = item.kind === 'photo' ? (el.naturalHeight || el.height) : el.videoHeight;
   if (!sw || !sh) return;
   const base = coverRect(sw, sh, WIDTH, HEIGHT);
   let scale = 1, dx = 0, dy = 0;

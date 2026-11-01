@@ -20,6 +20,7 @@ export class Player {
     this.soundtrack = soundtrack;
     this.opts = opts;
     this.playing = false;
+    this.token = 0;
     this.onTime = null;
     this.onEnd = null;
   }
@@ -27,10 +28,14 @@ export class Player {
   // extraDest: optional AudioNode (e.g. MediaStreamDestination) to also feed
   async play(from = 0, extraDest = null) {
     this.stop();
+    const token = ++this.token;
     const ac = audioContext();
-    if (ac.state !== 'running') await ac.resume();
+    if (ac.state !== 'running') await Promise.race([ac.resume(), new Promise(r => setTimeout(r, 1500))]);
+    if (ac.state !== 'running') throw new Error('Sound is blocked. Tap Play again.');
+    if (token !== this.token) return false;
     // get every visible video near the start frame-ready before the clock starts
     await this._sync(from, true);
+    if (token !== this.token) return false; // stopped while we were getting ready
     this.t0 = ac.currentTime + 0.05 - from;
     if (this.soundtrack) {
       const src = ac.createBufferSource();
@@ -56,6 +61,7 @@ export class Player {
       this.raf = requestAnimationFrame(tick);
     };
     this.raf = requestAnimationFrame(tick);
+    return true;
   }
 
   async _sync(t, wait) {
@@ -66,8 +72,8 @@ export class Player {
       const v = entry.item.el;
       visible.add(v);
       const want = sourceTimeAt(entry, t);
-      if (v.paused || Math.abs(v.currentTime - want) > 0.25) {
-        if (Math.abs(v.currentTime - want) > 0.08) v.currentTime = want;
+      if (v.paused || Math.abs(v.currentTime - want) > 0.12) {
+        if (Math.abs(v.currentTime - want) > 0.05) v.currentTime = want;
         if (wait) waits.push(new Promise(r => { v.addEventListener('seeked', r, { once: true }); setTimeout(r, 1500); }));
         if (v.paused) v.play().catch(() => {});
       }
@@ -85,6 +91,7 @@ export class Player {
   }
 
   stop() {
+    this.token++;
     this.playing = false;
     cancelAnimationFrame(this.raf);
     if (this.src) { try { this.src.stop(); } catch {} this.src = null; }
