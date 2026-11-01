@@ -1,16 +1,18 @@
-import { buildTimeline, formatTime } from './timeline.js';
+import { buildTimeline, formatTime, planTemplate, TEMPLATES } from './timeline.js';
+import { detectBeats, fallbackBeats } from './beats.js';
 import { drawFrame, seekFor } from './render.js';
 import { decodeFile, mixSoundtrack } from './audio.js';
 import { Player, audioContext } from './player.js';
 import { exportReel, exportMethod } from './export.js';
 import { transcribe } from './captions.js';
 
-export const VERSION = '0.2.0';
+export const VERSION = '0.3.0';
 
 const $ = id => document.getElementById(id);
 const state = {
   items: [],
-  music: null,         // { file, buffer }
+  template: 'postcard',
+  music: null,         // { file, buffer, beats }
   musicVolume: 0.8,
   duck: true,
   tl: null,
@@ -149,7 +151,10 @@ function renderItems() {
     const chips = document.createElement('div');
     chips.className = 'chips';
 
-    if (item.kind === 'photo') {
+    const timed = TEMPLATES[state.template].beat;
+    if (item.kind === 'photo' && timed) {
+      sub.textContent = 'Timed to the music';
+    } else if (item.kind === 'photo') {
       sub.textContent = `${item.duration} s on screen`;
       const seg = document.createElement('div');
       seg.className = 'seg';
@@ -174,6 +179,16 @@ function renderItems() {
       }
     }
     meta.append(name, sub, chips);
+    if (state.template === 'journey' || state.template === 'dump') {
+      const place = document.createElement('input');
+      place.type = 'text'; place.className = 'place'; place.autocomplete = 'off';
+      place.placeholder = state.template === 'journey' ? 'Place, e.g. Munnar, Kerala' : 'Caption, e.g. Munnar, day 2';
+      place.value = item.place || '';
+      place.dataset.key = `${item.id}-place`;
+      place.setAttribute('aria-label', `${state.template === 'journey' ? 'Place' : 'Caption'} for ${name.textContent.toLowerCase()}`);
+      place.addEventListener('input', () => { item.place = place.value; invalidate(false); });
+      meta.appendChild(place);
+    }
     if (item.status) {
       const st = document.createElement('div');
       st.className = 'status' + (item.statusErr ? ' err' : '');
@@ -246,6 +261,29 @@ async function toggleSpeech(item, key) {
   }
 }
 
+// ---------- style ----------
+
+const STYLE_HINTS = {
+  postcard: 'Gentle crossfades with a title card.',
+  beatdrop: 'A dark teaser until the drop, then a cut on every beat. Your title is the hook line.',
+  dump: 'Photos land like prints on the beat, then a grid of everything. Add a caption to each.',
+  journey: 'Whip pans on the beat, a place tag for each stop and a route along the bottom.',
+  cinematic: 'Letterbox, warm film look and slow dissolves on the music’s bars.',
+};
+
+function renderStyles() {
+  const box = $('styles');
+  box.innerHTML = '';
+  for (const [id, t] of Object.entries(TEMPLATES)) {
+    box.appendChild(chip(t.label, state.template === id, () => {
+      state.template = id;
+      renderStyles(); renderItems(); invalidate(false);
+    }, `style-${id}`));
+  }
+  $('style-hint').textContent = STYLE_HINTS[state.template];
+}
+renderStyles();
+
 // ---------- title & music ----------
 
 $('title').addEventListener('input', () => invalidate(false));
@@ -259,8 +297,13 @@ $('music').addEventListener('change', async e => {
   $('music-err').textContent = '';
   const buffer = await decodeFile(file);
   if (!buffer) { $('music-label').textContent = 'Choose a track'; $('music-err').textContent = 'That audio file couldn’t be read. Try an MP3 or M4A.'; return; }
-  state.music = { file, buffer };
-  $('music-label').textContent = `${file.name.replace(/\.[^.]+$/, '')} · ${formatTime(buffer.duration)}`;
+  $('music-label').textContent = 'Finding the beat…';
+  await new Promise(r => setTimeout(r, 30)); // let the label paint before the busy bit
+  let beats = null;
+  try { beats = detectBeats(buffer.getChannelData(0), buffer.sampleRate, { maxSeconds: 65 }); } catch {}
+  state.music = { file, buffer, beats };
+  const bpm = beats ? ` · ${Math.round(beats.bpm)} BPM` : '';
+  $('music-label').textContent = `${file.name.replace(/\.[^.]+$/, '')} · ${formatTime(buffer.duration)}${bpm}`;
   $('music-clear').classList.remove('hidden');
   $('music-opts').classList.remove('hidden');
   invalidate();
@@ -287,7 +330,9 @@ function invalidate(soundChanged = true, keepOutput = false) {
   stopPreview();
   if (soundChanged) state.soundtrack = null;
   if (!keepOutput) clearOutput();
-  state.tl = buildTimeline(state.items);
+  const beats = (state.music && state.music.beats) || fallbackBeats();
+  const plan = planTemplate(state.items, state.template, beats);
+  state.tl = buildTimeline(state.items, plan ? { ...plan, template: state.template, beats } : {});
   const { total, truncated, skipped } = state.tl;
   $('len').textContent = total ? `${formatTime(total)} · ${state.items.length} item${state.items.length === 1 ? '' : 's'}` : 'Empty';
   $('truncated').classList.toggle('hidden', !truncated);
@@ -305,9 +350,20 @@ async function drawStill() {
   const ctx = $('preview').getContext('2d');
   const tl = state.tl;
   if (!tl || !tl.total || state.exporting) { ctx.fillStyle = '#000'; ctx.fillRect(0, 0, 1080, 1920); return; }
-  const t = Math.min(1.2, tl.total / 2);
+  const t = stillTime(tl);
   await seekFor(tl, t);
   drawFrame(ctx, tl, t, titles());
+}
+
+// A frame that shows off the style: just after the drop, mid-whip, a few prints in.
+function stillTime(tl) {
+  const e = tl.entries;
+  const at = (i, d) => Math.min(tl.total - 0.05, e[i].start + d);
+  if (tl.template === 'beatdrop' && e[1]) return at(1, 0.06);
+  if (tl.template === 'journey' && e[1]) return at(1, e[1].fadeIn * 0.5);
+  if (tl.template === 'cinematic' && e[1]) return at(1, e[1].fadeIn * 0.5);
+  if (tl.template === 'dump') return at(Math.min(3, e.length - 1), 0.3);
+  return Math.min(1.2, tl.total / 2);
 }
 
 function titles() {
@@ -444,7 +500,8 @@ async function updateDiag() {
     `v${VERSION}`,
     `export: ${method || 'unsupported'}${state.output ? ` · last: ${state.output.method}, ${(state.output.file.size / 1e6).toFixed(1)} MB` : ''}`,
     `innerHeight ${innerHeight} · vv ${vv ? `${Math.round(vv.height)}/${Math.round(vv.offsetTop)}` : 'n/a'} · standalone ${!!navigator.standalone}`,
-    `items ${state.items.length} · length ${state.tl ? state.tl.total.toFixed(2) : 0}s`,
+    `items ${state.items.length} · length ${state.tl ? state.tl.total.toFixed(2) : 0}s · style ${state.template}`,
+    `beat ${state.music && state.music.beats ? `${state.music.beats.bpm} BPM, phase ${state.music.beats.phase.toFixed(3)}, drop ${state.music.beats.drop.toFixed(2)}${state.music.beats.confident ? '' : ' (weak)'}` : 'none (120 BPM grid)'}`,
     navigator.userAgent,
   ].join('\n');
 }

@@ -1,5 +1,6 @@
 // Draws one frame of the "Postcard" template onto a 1080x1920 canvas.
 import { WIDTH, HEIGHT, XFADE, visibleAt, sourceTimeAt } from './timeline.js';
+import { DRAW } from './fx.js';
 
 const ACCENT = '#FFD166';
 
@@ -148,10 +149,15 @@ function drawCaption(ctx, cues, t) {
 }
 
 export function drawFrame(ctx, tl, t, opts = {}) {
-  ctx.fillStyle = '#000';
-  ctx.fillRect(0, 0, WIDTH, HEIGHT);
-  for (const { entry, alpha } of visibleAt(tl.entries, t)) drawMedia(ctx, entry, t, alpha);
-  drawTitle(ctx, t, opts.title, opts.subtitle);
+  const template = DRAW[tl.template];
+  if (template) {
+    template(ctx, tl, t, opts);
+  } else {
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, WIDTH, HEIGHT);
+    for (const { entry, alpha } of visibleAt(tl.entries, t)) drawMedia(ctx, entry, t, alpha);
+    drawTitle(ctx, t, opts.title, opts.subtitle);
+  }
   drawCaption(ctx, tl.cues, t);
   // fade to black at the end
   const tail = tl.total - t;

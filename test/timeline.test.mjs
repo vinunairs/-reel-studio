@@ -93,3 +93,120 @@ test('formatTime survives a missing duration', () => {
   assert.equal(formatTime(Infinity), '–:––');
   assert.equal(formatTime(65), '1:05');
 });
+
+// ---------- beats + templates ----------
+import { detectBeats, fallbackBeats } from '../js/beats.js';
+import { planTemplate, TEMPLATES } from '../js/timeline.js';
+
+function clickTrack({ bpm, phase, seconds = 20, sr = 22050, accent = null }) {
+  const x = new Float32Array(seconds * sr);
+  const period = 60 / bpm;
+  const click = (t, amp) => {
+    const i0 = Math.round(t * sr);
+    for (let k = 0; k < 600 && i0 + k < x.length; k++) x[i0 + k] += amp * Math.exp(-k / 120) * Math.sin(k * 0.9);
+  };
+  for (let t = phase; t < seconds; t += period) click(t, accent != null && Math.abs(t - accent) < 1e-6 ? 1 : 0.35);
+  return { x, sr };
+}
+const onGrid = (t, b, unit = b.period) => { const k = (t - b.phase) / unit; return Math.abs(k - Math.round(k)) * unit < 0.01; };
+
+test('finds tempo, phase and the drop in a click track', () => {
+  const { x, sr } = clickTrack({ bpm: 120, phase: 0.25, accent: 3.25 });
+  const b = detectBeats(x, sr);
+  assert.ok(Math.abs(b.bpm - 120) <= 1, `bpm ${b.bpm}`);
+  assert.ok(onGrid(0.25, b), `phase ${b.phase}`);
+  assert.ok(Math.abs(b.drop - 3.25) < 0.03, `drop ${b.drop}`);
+  assert.equal(b.confident, true);
+});
+
+test('kicks set the phase over off-beat hi-hats, and the loudness jump marks the drop', () => {
+  const sr = 22050, secs = 14, bpm = 112, period = 60 / bpm, phase = 0.3, drop = phase + 7 * period;
+  const x = new Float32Array(sr * secs);
+  let seed = 1; const rnd = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296) * 2 - 1;
+  const add = (t, len, f) => { const i0 = Math.round(t * sr); for (let k = 0; k < len * sr && i0 + k < x.length; k++) x[i0 + k] += f(k / sr); };
+  for (let t = phase; t < secs; t += period) {
+    const amp = t < drop - 1e-6 ? 0.3 : 0.9;
+    add(t, 0.25, u => amp * Math.sin(2 * Math.PI * (60 + 90 * Math.exp(-u * 30)) * u) * Math.exp(-u * 14));
+    add(t + period / 2, 0.08, u => 0.25 * rnd() * Math.exp(-u * 60));
+  }
+  const b = detectBeats(x, sr);
+  assert.ok(Math.abs(b.bpm - bpm) <= 1, `bpm ${b.bpm}`);
+  assert.ok(onGrid(phase, b), `phase ${b.phase}`);
+  assert.ok(Math.abs(b.drop - drop) < 0.03, `drop ${b.drop} want ${drop}`);
+});
+
+test('reads a 96 BPM track as 96, not double', () => {
+  const { x, sr } = clickTrack({ bpm: 96, phase: 0.1 });
+  const b = detectBeats(x, sr);
+  assert.ok(Math.abs(b.bpm - 96) <= 1, `bpm ${b.bpm}`);
+});
+
+test('silence falls back to a steady 120 BPM grid', () => {
+  const b = detectBeats(new Float32Array(22050 * 5), 22050);
+  assert.deepEqual([b.bpm, b.period, b.confident], [120, 0.5, false]);
+});
+
+const photos = n => Array.from({ length: n }, () => ({ kind: 'photo', duration: 3 }));
+const beats = { period: 60 / 128, phase: 0.11, drop: 0.11 + 7 * 60 / 128 };
+
+test('Beat Drop: first photo holds until the drop, every cut lands on a beat', () => {
+  const plan = planTemplate(photos(10), 'beatdrop', beats);
+  const tl = buildTimeline(photos(10), { ...plan, template: 'beatdrop', beats });
+  assert.ok(Math.abs(tl.entries[1].start - beats.drop) < 1e-6);
+  for (const e of tl.entries.slice(1)) assert.ok(onGrid(e.start, beats), `cut at ${e.start}`);
+  for (const e of tl.entries.slice(1, -1)) { const d = e.end - e.start; assert.ok(d >= 0.4 - 1e-9 && d <= 0.9 + 1e-9, `len ${d}`); }
+});
+
+test('Journey: each whip is centred on a beat', () => {
+  const plan = planTemplate(photos(6), 'journey', beats);
+  const tl = buildTimeline(photos(6), { ...plan, template: 'journey', beats });
+  for (const e of tl.entries.slice(1)) {
+    assert.ok(Math.abs(e.fadeIn - TEMPLATES.journey.xfade) < 1e-9);
+    assert.ok(onGrid(e.start + e.fadeIn / 2, beats), `whip mid at ${e.start + e.fadeIn / 2}`);
+  }
+});
+
+test('Cinematic: dissolves are centred on bar lines and photos stay 2.5–4.4 s', () => {
+  const plan = planTemplate(photos(5), 'cinematic', beats);
+  const tl = buildTimeline(photos(5), { ...plan, template: 'cinematic', beats });
+  for (const e of tl.entries.slice(1)) assert.ok(onGrid(e.start + e.fadeIn / 2, beats, beats.period * 4), `dissolve at ${e.start}`);
+  for (const b of plan.boundaries.slice(0, -1).map((x, i, a) => (i ? x - a[i - 1] : x))) assert.ok(b >= 2.5 - 1e-9 && b <= 4.4 + 1e-9, `gap ${b}`);
+});
+
+test('Photo Dump: quick beat cuts plus a closing grid that extends the reel', () => {
+  const plan = planTemplate(photos(12), 'dump', beats);
+  const tl = buildTimeline(photos(12), { ...plan, template: 'dump', beats });
+  assert.ok(Math.abs(tl.total - tl.outroStart - TEMPLATES.dump.outro) < 1e-9);
+  for (const e of tl.entries) { const d = e.end - e.start; assert.ok(d >= 0.5 - 1e-9 && d <= 1.0 + 1e-9, `len ${d}`); }
+});
+
+test('a clip shorter than a beat step plays whole, then cuts snap back onto the grid', () => {
+  const items = [{ kind: 'photo' }, { kind: 'video', srcDuration: 0.8 }, { kind: 'photo' }, { kind: 'photo' }];
+  const plan = planTemplate(items, 'journey', beats);
+  const tl = buildTimeline(items, { ...plan, template: 'journey', beats });
+  const clip = tl.entries[1];
+  assert.ok(clip.end - clip.start <= 0.8 + 1e-9);
+  const last = tl.entries[3];
+  assert.ok(onGrid(last.start + last.fadeIn / 2, beats), `back on grid at ${last.start}`);
+});
+
+test('a clip never gets more screen time than it has footage', () => {
+  const items = [{ kind: 'photo' }, { kind: 'video', srcDuration: 1.7 }, { kind: 'photo' }];
+  const plan = planTemplate(items, 'cinematic', beats);
+  assert.ok(plan.lengths[1] <= 1.7 + 1e-9, `got ${plan.lengths[1]}`);
+});
+
+test('Postcard keeps its own timing; no music still gives a beat plan', () => {
+  assert.equal(planTemplate(photos(3), 'postcard', beats), null);
+  const plan = planTemplate(photos(4), 'dump', fallbackBeats());
+  assert.ok(plan.boundaries.every(b => onGrid(b, fallbackBeats())));
+});
+
+test('a planned reel still respects the 60 s cap', () => {
+  const items = Array.from({ length: 40 }, () => ({ kind: 'photo' }));
+  const plan = planTemplate(items, 'cinematic', beats);
+  const tl = buildTimeline(items, { ...plan, template: 'cinematic', beats });
+  assert.ok(tl.total <= 60 + 1e-9);
+  assert.equal(tl.truncated, true);
+  assert.equal(tl.skipped, 0);
+});
